@@ -34,6 +34,12 @@
 
 #define HASHFN bitwisehash
 
+// W2V: min function
+#define min(a,b) \
+   ({ __typeof__ (a) _a = (a); \
+       __typeof__ (b) _b = (b); \
+     _a < _b ? _a : _b; })
+
 typedef double real;
 
 typedef struct cooccur_rec {
@@ -52,6 +58,7 @@ typedef struct cooccur_rec_id {
 typedef struct hashrec {
     char        *word;
     long long id;
+    long count;
     struct hashrec *next;
 } HASHREC;
 
@@ -104,7 +111,7 @@ HASHREC *hashsearch(HASHREC **ht, char *w) {
 }
 
 /* Insert string in hash table, check for duplicates which should be absent */
-void hashinsert(HASHREC **ht, char *w, long long id) {
+void hashinsert(HASHREC **ht, char *w, long long id, long count) {
     HASHREC     *htmp, *hprv;
     unsigned int hval = HASHFN(w, TSIZE, SEED);
     for (hprv = NULL, htmp = ht[hval]; htmp != NULL && scmp(htmp->word, w) != 0; hprv = htmp, htmp = htmp->next);
@@ -113,6 +120,7 @@ void hashinsert(HASHREC **ht, char *w, long long id) {
         htmp->word = (char *) malloc(strlen(w) + 1);
         strcpy(htmp->word, w);
         htmp->id = id;
+        htmp->count = count;
         htmp->next = NULL;
         if (hprv == NULL) ht[hval] = htmp;
         else hprv->next = htmp;
@@ -327,7 +335,7 @@ int get_cooccurrence() {
     if (verbose > 1) fprintf(stderr, "Reading vocab from file \"%s\"...", vocab_file);
     fid = fopen(vocab_file,"r");
     if (fid == NULL) {fprintf(stderr,"Unable to open vocab file %s.\n",vocab_file); return 1;}
-    while (fscanf(fid, format, str, &id) != EOF) hashinsert(vocab_hash, str, ++j); // Here id is not used: inserting vocab words into hash table with their frequency rank, j
+    while (fscanf(fid, format, str, &id) != EOF) hashinsert(vocab_hash, str, ++j, id); // Here id is not used: inserting vocab words into hash table with their frequency rank, j
     fclose(fid);
     vocab_size = j;
     j = 0;
@@ -358,6 +366,28 @@ int get_cooccurrence() {
     sprintf(filename,"%s_%04d.bin", file_head, fidcounter);
     foverflow = fopen(filename,"wb");
     if (verbose > 1) fprintf(stderr,"Processing token: 0");
+
+    //W2V: filtered_count = sum{count(word), for word in vocab if count(word)>min_count}
+    //W2V: threshold_count = 1e-3 * filtered_count
+    // NOTE: I had to add count to the vocab hash
+    int min_count = 5;
+    long long  filtered_count = 0;
+    //traverse all buckets
+    for (int i = 0 ; i < TSIZE ; i++) {
+        //for every bucket, traverse 
+        HASHREC     *htmp, *hprv;
+        if (vocab_hash[i]  == NULL) { continue; } 
+            for (htmp=vocab_hash[i]; htmp != NULL; htmp = htmp->next) {
+            long w_c = htmp->count; 
+            if (w_c >= min_count) {
+                filtered_count = filtered_count + w_c;
+            }
+        }
+    }
+    long double threshold_count = 1e-3 * (long double) filtered_count;
+    long long count_skip = 0;
+    fprintf(stderr,"\n *** %lld filtered_count.\n",filtered_count);
+    fprintf(stderr,"\n *** %Lf threshold_count.\n",threshold_count);
     
     /* For each token in input stream, calculate a weighted cooccurrence sum within window_size */
     while (1) {
@@ -390,22 +420,55 @@ int get_cooccurrence() {
             continue; // Skip out-of-vocabulary words
         }
         w2 = htmp->id; // Target word (frequency rank)
+
+        //W2V: word_probability = min{1, (sqrt(count(w2) / threshold_count) + 1) * (threshold_count / count(w2))}
+        long int c_w2 = htmp->count;
+        if (c_w2 < min_count) {
+            continue;
+        }
+        //fprintf(stderr,"%d w2_prob %s.\n",c_w2, str);
+        double w2_prob = ((double)sqrt(c_w2) / threshold_count + 1) * ((double)threshold_count / c_w2);
+		w2_prob = min(w2_prob, 1.0);
+        //fprintf(stderr,"%f w2_prob.\n",w2_prob);
+
+        //W2V: word_probability = int(round(word_probability * 2**32))
+		// Note: gensim code is doing this 2^32 thing so just doing the same.
+		long int w2_prob_int = (long int) w2_prob * pow(2, 32);
+        //W2V: if random.rand(0,1) *2**32 > word_probability: continue;
+		double rnd = (double)rand() / (double)RAND_MAX;
+        //fprintf(stderr,"%f rnd.\n",rnd);
+        //fprintf(stderr,"%lf MAX.\n",RAND_MAX);
+        //if (rnd * pow(2, 32) > w2_prob_int) {
+        if (rnd > w2_prob) {
+            //fprintf(stderr,"%lf rnd.\n",rnd);
+            //fprintf(stderr,"%lf w2_prob.\n",w2_prob);
+            //fprintf(stderr,"%lf rnd.\n",rnd * pow(2,32));
+            //fprintf(stderr,"%lf w2_prob.\n",w2_prob_int);
+            count_skip += 1;
+            continue;
+        }
+        
+        //W2V (modified all window_size to tmp): tmp_window_size = randint(1, window_size)
+        //int tmp_window_size = rand() % window_size + 1;
+        // Note: instead we will give different weight 
+        //long int tmp_window_size = window_size;
+
         for (k = j - 1; k >= ( (j > window_size) ? j - window_size : 0 ); k--) { // Iterate over all words to the left of target word, but not past beginning of line
             w1 = history[k % window_size]; // Context word (frequency rank)
             if (verbose > 2) fprintf(stderr, "Adding cooccur between words %lld and %lld.\n", w1, w2);
             if ( w1 < max_product/w2 ) { // Product is small enough to store in a full array
-                bigram_table[lookup[w1-1] + w2 - 2] += distance_weighting ? 1.0/((real)(j-k)) : 1.0; // Weight by inverse of distance between words if needed
-                if (symmetric > 0) bigram_table[lookup[w2-1] + w1 - 2] += distance_weighting ? 1.0/((real)(j-k)) : 1.0; // If symmetric context is used, exchange roles of w2 and w1 (ie look at right context too)
+                bigram_table[lookup[w1-1] + w2 - 2] += distance_weighting ? 1.0 - ((real)(j-k) - 1.0)/(real)window_size : 1.0; // Weight by inverse of distance between words if needed
+                if (symmetric > 0) bigram_table[lookup[w2-1] + w1 - 2] += distance_weighting ? 1.0 - ((real)(j-k) - 1.0)/(real)window_size : 1.0; // If symmetric context is used, exchange roles of w2 and w1 (ie look at right context too)
             }
             else { // Product is too big, data is likely to be sparse. Store these entries in a temporary buffer to be sorted, merged (accumulated), and written to file when it gets full.
                 cr[ind].word1 = w1;
                 cr[ind].word2 = w2;
-                cr[ind].val = distance_weighting ? 1.0/((real)(j-k)) : 1.0;
+                cr[ind].val = distance_weighting ? 1.0 - ((real)(j-k) - 1.0)/(real)window_size : 1.0;
                 ind++; // Keep track of how full temporary buffer is
                 if (symmetric > 0) { // Symmetric context
                     cr[ind].word1 = w2;
                     cr[ind].word2 = w1;
-                    cr[ind].val = distance_weighting ? 1.0/((real)(j-k)) : 1.0;
+                    cr[ind].val = distance_weighting ? 1.0 - ((real)(j-k) - 1.0)/(real)window_size : 1.0;
                     ind++;
                 }
             }
@@ -420,6 +483,7 @@ int get_cooccurrence() {
     write_chunk(cr,ind,foverflow);
     sprintf(filename,"%s_0000.bin",file_head);
     
+    fprintf(stderr,"skipped %d words.\n",count_skip);
     /* Write out full bigram_table, skipping zeros */
     if (verbose > 1) fprintf(stderr, "Writing cooccurrences to disk");
     fid = fopen(filename,"wb");
@@ -439,12 +503,19 @@ int get_cooccurrence() {
     }
     
     if (verbose > 1) fprintf(stderr,"%d files in total.\n",fidcounter + 1);
+    fprintf(stderr, "aaaaaa\n");
     fclose(fid);
+    if (verbose > 1) fprintf(stderr, "aaaaab\n");
     fclose(foverflow);
+    if (verbose > 1) fprintf(stderr, "aaaaac\n");
     free(cr);
+    if (verbose > 1) fprintf(stderr, "aaaaad\n");
     free(lookup);
+    if (verbose > 1) fprintf(stderr, "aaaaae\n");
     free(bigram_table);
+    if (verbose > 1) fprintf(stderr, "aaaaaf\n");
     free(vocab_hash);
+    if (verbose > 1) fprintf(stderr, "aaaaag\n");
     return merge_files(fidcounter + 1); // Merge the sorted temporary files
 }
 
