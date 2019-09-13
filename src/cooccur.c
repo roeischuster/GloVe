@@ -387,7 +387,7 @@ int get_cooccurrence() {
     double threshold_count = 1e-3 * (double) filtered_count;
     long long count_skip = 0;
     fprintf(stderr,"\n *** %lld filtered_count.\n",filtered_count);
-    fprintf(stderr,"\n *** %Lf threshold_count.\n",threshold_count);
+    fprintf(stderr,"\n *** %lf threshold_count.\n",threshold_count);
     
     /* For each token in input stream, calculate a weighted cooccurrence sum within window_size */
     while (1) {
