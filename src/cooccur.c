@@ -384,7 +384,7 @@ int get_cooccurrence() {
             }
         }
     }
-    long double threshold_count = 1e-3 * (long double) filtered_count;
+    double threshold_count = 1e-3 * (double) filtered_count;
     long long count_skip = 0;
     fprintf(stderr,"\n *** %lld filtered_count.\n",filtered_count);
     fprintf(stderr,"\n *** %Lf threshold_count.\n",threshold_count);
@@ -427,17 +427,29 @@ int get_cooccurrence() {
             continue;
         }
         //fprintf(stderr,"%d w2_prob %s.\n",c_w2, str);
-        double w2_prob = ((double)sqrt(c_w2) / threshold_count + 1) * ((double)threshold_count / c_w2);
+        double w2_prob = ((double)sqrt((double)c_w2/threshold_count) + 1) * ((double)threshold_count / c_w2);
 		w2_prob = min(w2_prob, 1.0);
         //fprintf(stderr,"%f w2_prob.\n",w2_prob);
 
         //W2V: word_probability = int(round(word_probability * 2**32))
 		// Note: gensim code is doing this 2^32 thing so just doing the same.
-		long int w2_prob_int = (long int) w2_prob * pow(2, 32);
+		//long int w2_prob_int = (long int) w2_prob * (double)RAND_MAX;
         //W2V: if random.rand(0,1) *2**32 > word_probability: continue;
-		double rnd = (double)rand() / (double)RAND_MAX;
-        //fprintf(stderr,"%f rnd.\n",rnd);
-        //fprintf(stderr,"%lf MAX.\n",RAND_MAX);
+		int rndd = (int)rand();
+	if (w2 == 1){
+    		fprintf(stderr,"*** %lf threshold_count.\n",threshold_count);
+    		fprintf(stderr,"*** %lf sqrt.\n",sqrt(c_w2));
+    		fprintf(stderr,"*** %lf firstpar.\n",((double)sqrt(c_w2) / threshold_count + 1));
+    		fprintf(stderr,"*** %lf secpar.\n",((double)threshold_count / c_w2));
+    		fprintf(stderr,"*** %ld c_w.\n",c_w2);
+//           fprintf(stderr,"%d rand().\n",rndd);
+//           fprintf(stderr,"%ld MAX.\n",RAND_MAX);
+           fprintf(stderr,"%lf w2 prob.\n", w2_prob);
+        }
+		double rnd = (double)rndd / (double)RAND_MAX;
+	if (w2 == 1){
+           fprintf(stderr,"%lf rnd.\n",rnd);
+        }
         //if (rnd * pow(2, 32) > w2_prob_int) {
         if (rnd > w2_prob) {
             //fprintf(stderr,"%lf rnd.\n",rnd);
