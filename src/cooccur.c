@@ -436,7 +436,7 @@ int get_cooccurrence() {
 		//long int w2_prob_int = (long int) w2_prob * (double)RAND_MAX;
         //W2V: if random.rand(0,1) *2**32 > word_probability: continue;
 		int rndd = (int)rand();
-	if (w2 == 1){
+	if ((0) && (w2 == 1)){
     		fprintf(stderr,"*** %lf threshold_count.\n",threshold_count);
     		fprintf(stderr,"*** %lf sqrt.\n",sqrt(c_w2));
     		fprintf(stderr,"*** %lf firstpar.\n",((double)sqrt(c_w2) / threshold_count + 1));
@@ -447,7 +447,7 @@ int get_cooccurrence() {
            fprintf(stderr,"%lf w2 prob.\n", w2_prob);
         }
 		double rnd = (double)rndd / (double)RAND_MAX;
-	if (w2 == 1){
+	if ((0) && ( w2 == 1)){
            fprintf(stderr,"%lf rnd.\n",rnd);
         }
         //if (rnd * pow(2, 32) > w2_prob_int) {

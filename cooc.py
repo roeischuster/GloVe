@@ -131,6 +131,7 @@ if __name__ == "__main__":
 	textdump = TextDump(options.corpus_type)
 	if options.native:
 		override_params = {
+			'vocab_path' : os.path.join(cache_dir, 'glove', 'vocab_w2v.dat'),
 			'CO_OCCURRENCE_FILE': os.path.join(cache_dir, 'glove', 'co_occurrences_w2v_native.dat'),
         		'BUILD_DIR': os.path.join(os.path.abspath(os.path.curdir), "w2v_cooccurrences", "build")  # Should Be global
 			}
