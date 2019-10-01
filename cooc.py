@@ -1,5 +1,7 @@
 #!/usr/bin/python
 from embedding_models.glove_model import GloveSteps, execute_glove_step_internal, glove_model_to_word2vec
+import utils
+import json
 from tqdm import tqdm
 import pickle
 import matplotlib.pyplot as plt
@@ -22,7 +24,7 @@ import resources as r
 import itertools as it
 import conf
 from conf import *
-from corpora.text_dump import TextDump
+from corpora.text_dump import TextDump, TextDumpFromPath
 from collections import defaultdict
 from scipy.sparse import dok_matrix
 from scipy.sparse import lil_matrix
@@ -34,7 +36,7 @@ from gensim.models import Word2Vec
 def opt_parse():
      parser = ArgumentParser()
      parser.add_argument("-ct", "--corpus_type", dest="corpus_type", help="corpus type", metavar="CORPUS_TYPE")
-     parser.add_argument("-n", "--native", dest="native", help="use glove's native cooccurrence count (fitted to count w2v)", action='store_true', default=False)
+     #parser.add_argument("-n", "--native", dest="native", help="use glove's native cooccurrence count (fitted to count w2v)", action='store_true', default=False)
      options = parser.parse_args()
      #if not options.filename:
      #	parser.error("No input file")
@@ -50,18 +52,10 @@ word2vec_params = {
         'window': window,
         'workers': 8,
         'sg': 1,
-	'sample':sample
+	'sample':sample,
+	'iter':15
     }
 
-native_params = {
-        'VERBOSE': '2',
-        'MEMORY': '4.0',
-        'VOCAB_MIN_COUNT': '5',
-        'MAX_VOCAB': '100000000',
-        'VECTOR_SIZE': '100',
-        'WINDOW_SIZE': window,
-        'NUM_THREADS': '12',
-}
 
 
 def count_cooc_glovevocab(sentences, vocab):
@@ -124,33 +118,56 @@ def count_cooc(sentences, model, glovevocab):
 	return coocs
 
 
+def add_w2v(cache_dir, w2v_params=word2vec_params):
+	w2vpath = os.path.join(cache_dir, 'w2v')
+	os.makedirs(w2vpath, exist_ok=True)
+	native_params = {
+	        'VERBOSE': '2',
+	        'MEMORY': '4.0',
+	        'VOCAB_MIN_COUNT': w2v_params['min_count'],
+	        'MAX_VOCAB': '100000000',
+	        'VECTOR_SIZE': w2v_params['size'],
+	        'WINDOW_SIZE': w2v_params['window'],
+	        'NUM_THREADS': '12',
+	}
+	override_params = {#all params set here actually override the ones in glove_model, but this ugly hack overrides the un-overridable
+		#'vocab_path' : os.path.join(cache_dir, 'glove', 'vocab_w2v.dat'),
+		#'CO_OCCURRENCE_FILE': os.path.join(cache_dir, 'glove', 'co_occurrences_w2v_native.dat'),
+        	'BUILD_DIR': os.path.join(os.path.abspath(os.path.curdir), "w2v_cooccurrences", "build")  # Should Be global
+		}
+
+
+	json.dump(w2v_params, open(h.getmodelfile(cache_dir, "w2v_params.json"), 'w'))
+
+	#textdump = TextDumpFromPath(cache_dir)
+	corpus_file = os.path.join(cache_dir, "glove_corpus.dat")
+	w2v = Word2Vec(corpus_file=corpus_file, **w2v_params)
+	pickle.dump(w2v.wv, open(h.getmodelfile(cache_dir, "model.pkl"), 'wb'))
+
+	assert(os.path.exists(override_params['BUILD_DIR']))
+	for glove_step in [GloveSteps.BUILD_VOCAB,
+	           GloveSteps.BUILD_CO_OCCURRENCE,
+	           ]:
+		execute_glove_step_internal(None, None, glove_step, cache_dir, override_params, 'w2v', **w2v_params)
+
+
 if __name__ == "__main__":
 	options = opt_parse()
 	cache_dir = h.cttoglpath(options.corpus_type)
+	utils.init_logger(cache_dir+ "/run_log.log")
 
-	textdump = TextDump(options.corpus_type)
-	if options.native:
-		override_params = {
-			'vocab_path' : os.path.join(cache_dir, 'glove', 'vocab_w2v.dat'),
-			'CO_OCCURRENCE_FILE': os.path.join(cache_dir, 'glove', 'co_occurrences_w2v_native.dat'),
-        		'BUILD_DIR': os.path.join(os.path.abspath(os.path.curdir), "w2v_cooccurrences", "build")  # Should Be global
-			}
-		assert(os.path.exists(override_params['BUILD_DIR']))
-		for glove_step in [GloveSteps.BUILD_VOCAB,
-	                   GloveSteps.BUILD_CO_OCCURRENCE,
-	                   ]:
-	    		execute_glove_step_internal(None, None, glove_step, cache_dir, override_params, **native_params)
-		quit()
+	add_w2v(cache_dir)
 
-	w2v = Word2Vec(tqdm(textdump), iter=0, **word2vec_params)
-	vocab = r.get_vocab(cache_dir)
-	coocs = count_cooc(tqdm(textdump.get_texts()), w2v, vocab)
-	coocs_coord = coocs.tocoo()
-	coocs_len = coocs.getnnz()
-	with open(os.path.join(cache_dir, 'glove', 'co_occurrences_w2v.dat'), 'wb') as coocout:
-		prev_i = 0
-		for i,j,c in tqdm(zip(coocs_coord.row, coocs_coord.col, coocs_coord.data), total=coocs_len):
-			assert(i>=prev_i)
-			coocout.write(struct.pack('iid', i, j, c))
-			prev_i = i
-
+	#textdump = TextDump(options.corpus_type)
+#	w2v = Word2Vec(tqdm(textdump), iter=0, **word2vec_params)
+#	vocab = r.get_vocab(cache_dir)
+#	coocs = count_cooc(tqdm(textdump.get_texts()), w2v, vocab)
+#	coocs_coord = coocs.tocoo()
+#	coocs_len = coocs.getnnz()
+#	with open(os.path.join(cache_dir, 'glove', 'co_occurrences_w2v.dat'), 'wb') as coocout:
+#		prev_i = 0
+#		for i,j,c in tqdm(zip(coocs_coord.row, coocs_coord.col, coocs_coord.data), total=coocs_len):
+#			assert(i>=prev_i)
+#			coocout.write(struct.pack('iid', i, j, c))
+#			prev_i = i
+#
